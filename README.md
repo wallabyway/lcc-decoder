@@ -2,6 +2,13 @@
 
 A minimal Three.js-based viewer for rendering LCC (Lixel CyberColor) format 3D Gaussian Splatting data.
 
+### **Demo:** [wallabyway.github.io/lcc-decoder/](wallabyway.github.io/lcc-decoder/)
+
+![Image](https://github.com/user-attachments/assets/e272e4e5-f11e-4f72-a904-2e2d6e08889f)
+
+
+> Note: install the `allow CORS` [chrome extension](https://chromewebstore.google.com/detail/allow-cors-access-control/lhobafahddgcelffkeicbaginigeejlf)
+
 ## Features
 
 - ✅ **LCC Format Support** - Loads and decodes LCC data files (meta.lcc, Data.bin, Index.bin)

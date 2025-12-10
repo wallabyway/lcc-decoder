@@ -24,7 +24,7 @@ export class LCCLoader {
 
         // Load metadata
         onProgress(0.05);
-        const metaResponse = await fetch(metaUrl);
+        const metaResponse = await fetch(metaUrl, { mode: 'cors' });
         this.meta = await metaResponse.json();
         this.parseAttributes();
 
@@ -41,6 +41,7 @@ export class LCCLoader {
         onProgress(0.2);
         const dataUrl = `${this.dataBasePath}data.bin`;
         let dataResponse = await fetch(dataUrl, {
+            mode: 'cors',
             headers: { 'Range': `bytes=${dataOffset}-${dataOffset + dataSize - 1}` }
         });
 
@@ -48,7 +49,7 @@ export class LCCLoader {
         if (dataResponse.status === 206) {
             dataBuffer = await dataResponse.arrayBuffer();
         } else {
-            const fullBuffer = await (await fetch(dataUrl)).arrayBuffer();
+            const fullBuffer = await (await fetch(dataUrl, { mode: 'cors' })).arrayBuffer();
             dataBuffer = fullBuffer.slice(dataOffset, dataOffset + dataSize);
         }
 
@@ -60,7 +61,7 @@ export class LCCLoader {
         let shData = null;
         if (this.meta.fileType === 'Quality') {
             try {
-                const shResponse = await fetch(`${this.dataBasePath}shcoef.bin`);
+                const shResponse = await fetch(`${this.dataBasePath}shcoef.bin`, { mode: 'cors' });
                 if (shResponse.ok) shData = this.parseShcoef(await shResponse.arrayBuffer());
             } catch (e) {}
         }

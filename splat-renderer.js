@@ -9,12 +9,11 @@ const vertexShader = `
 precision highp float;
 attribute vec3 a_center, a_col, a_covA, a_covB;
 attribute float a_opacity;
-uniform float W, H, focal_x, focal_y, tan_fovx, tan_fovy, scale_modifier;
+uniform float W, H, focal_x, focal_y, tan_fovx, tan_fovy;
 uniform mat4 viewmatrix, projmatrix;
 varying vec3 v_col;
 varying vec4 v_con_o;
 varying vec2 v_xy, v_pixf;
-varying float v_depth, v_scale_modif;
 
 vec3 computeCov2D(vec3 mean, float cov3D[6]) {
     vec4 t = viewmatrix * vec4(mean, 1.0);
@@ -48,7 +47,7 @@ void main() {
     float mid = 0.5 * (cov.x + cov.z);
     float lambda1 = mid + sqrt(max(0.1, mid * mid - det));
     float lambda2 = mid - sqrt(max(0.1, mid * mid - det));
-    float my_radius = ceil(3.0 * sqrt(max(lambda1, lambda2))) * (0.15 + scale_modifier * 0.85);
+    float my_radius = ceil(3.0 * sqrt(max(lambda1, lambda2)));
     vec2 point_image = vec2(((p_proj.x + 1.0) * W - 1.0) * 0.5, ((p_proj.y + 1.0) * H - 1.0) * 0.5);
     vec2 screen_pos = point_image + my_radius * position.xy;
 
@@ -56,8 +55,6 @@ void main() {
     v_con_o = vec4(conic, a_opacity);
     v_xy = point_image;
     v_pixf = screen_pos;
-    v_depth = -p_view.z;
-    v_scale_modif = 1.0 / scale_modifier;
     gl_Position = vec4(screen_pos / vec2(W, H) * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
@@ -66,13 +63,12 @@ precision highp float;
 varying vec3 v_col;
 varying vec4 v_con_o;
 varying vec2 v_xy, v_pixf;
-varying float v_scale_modif;
 
 void main() {
     vec2 d = v_xy - v_pixf;
     float power = -0.5 * (v_con_o.x * d.x * d.x + v_con_o.z * d.y * d.y) - v_con_o.y * d.x * d.y;
     if (power > 0.0) discard;
-    float alpha = min(0.99, v_con_o.w * exp(power * v_scale_modif));
+    float alpha = min(0.99, v_con_o.w * exp(power));
     if (alpha < 0.004) discard;
     gl_FragColor = vec4(v_col * alpha, alpha);
 }`;
@@ -149,7 +145,6 @@ export class GaussianSplatRenderer {
                 W: { value: innerWidth }, H: { value: innerHeight },
                 focal_x: { value: 0 }, focal_y: { value: 0 },
                 tan_fovx: { value: 0 }, tan_fovy: { value: 0 },
-                scale_modifier: { value: 1.0 },
                 viewmatrix: { value: new THREE.Matrix4() },
                 projmatrix: { value: new THREE.Matrix4() }
             },

@@ -31,7 +31,8 @@
 
         const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 10000);
         camera.up.set(0, 0, 1);
-        camera.position.set(0, -5, 2);
+        camera.position.set(1.437, 0.830, 0.345);
+        camera.rotation.set(-1.365, 0.719, 3.005);
 
         // First-person controls (Z-up)
         const euler = new THREE.Euler(0, 0, 0, 'ZXY');
@@ -72,7 +73,7 @@
 
         // Splat renderer
         let splatRenderer = null;
-        const loader = new LCCLoader({ targetLOD: 2 });
+        const loader = new LCCLoader({ targetLOD: 1 });
 
         async function loadLCC(basePath) {
             try {
@@ -89,15 +90,6 @@
                 grid.rotation.x = PI_2;
                 grid.position.z = bb.min[2] - 0.5;
                 scene.add(grid);
-
-                // Camera position
-                camera.position.set(
-                    (bb.min[0] + bb.max[0]) / 2,
-                    bb.min[1] - (bb.max[1] - bb.min[1]) * 0.3,
-                    bb.min[2] + 1.6
-                );
-                euler.set(PI_2, 0, 0, 'ZXY');
-                camera.quaternion.setFromEuler(euler);
             } catch (e) { console.error('Load failed:', e); }
         }
 

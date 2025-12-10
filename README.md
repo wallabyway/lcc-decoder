@@ -38,7 +38,11 @@ root/
    ```
 http://localhost:8000/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc
    ```
-   
+
+## Demo:
+
+https://lcc-viewer.xgrids.com/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc
+
 ## LCC Data Format
 
 - See the spec/lcc-spec.pdf file for complete details

@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LCC 3DGS Viewer - Test 1</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            background: #0a0a0f;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+        }
+        canvas {
+            display: block;
+        }
+        #info {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            color: #7af;
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid rgba(100, 150, 255, 0.3);
+            backdrop-filter: blur(10px);
+            z-index: 100;
+        }
+        #info h3 {
+            margin-bottom: 8px;
+            color: #9cf;
+            font-weight: 500;
+        }
+        #info p {
+            margin: 4px 0;
+            color: #888;
+        }
+        #info .value {
+            color: #7f7;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #7af;
+            font-size: 14px;
+            text-align: center;
+            z-index: 200;
+        }
+        #loading .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(100, 150, 255, 0.2);
+            border-top-color: #7af;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        #loading.hidden {
+            display: none;
+        }
+        #drop-zone {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(100, 150, 255, 0.1);
+            border: 4px dashed #7af;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 300;
+        }
+        #drop-zone.active {
+            display: flex;
+        }
+        #drop-zone p {
+            color: #7af;
+            font-size: 24px;
+        }
+        /* Attribution as per LCC license */
+        #attribution {
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            color: #555;
+            font-size: 10px;
+            z-index: 100;
+        }
+        #attribution a {
+            color: #7af;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading LCC data...</p>
+        <p id="load-progress"></p>
+    </div>
+    
+    <div id="info">
+        <h3>LCC 3DGS Viewer</h3>
+        <p>Loaded: <span class="value" id="splat-count">0</span></p>
+        <p>Total: <span class="value" id="total-count">0</span></p>
+        <p>FPS: <span class="value" id="fps">0</span></p>
+        <p>Sort: <span class="value" id="sort-time">0</span>ms</p>
+        <p id="data-source" style="font-size: 10px; color: #666;"></p>
+        <hr style="margin: 8px 0; border-color: rgba(100, 150, 255, 0.3);">
+        <p style="font-size: 10px; color: #666; line-height: 1.4;">
+            <strong>Click:</strong> Lock pointer to look around<br>
+            <strong>WASD:</strong> Move | <strong>Q/E:</strong> Up/Down<br>
+            <strong>Shift:</strong> Run | <strong>Esc:</strong> Unlock
+        </p>
+    </div>
+    
+    <div id="drop-zone">
+        <p>Drop LCC folder or meta.lcc file here</p>
+    </div>
+    
+    <div id="attribution">
+        Data Organization Format originated from <a href="https://xgrids.com" target="_blank">XGRIDS</a>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "../ref/LCC-Web-0.5.3/examples/engine/three/three.module.js",
+            "three/addons/": "../ref/LCC-Web-0.5.3/examples/engine/three/jsm/"
+        }
+    }
+    </script>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        import { LCCLoader } from './lcc-loader.js';
+        import { GaussianSplatRenderer } from './splat-renderer.js';
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1f);
+        
+        const renderer = new THREE.WebGLRenderer({ 
+            antialias: false,
+            powerPreference: 'high-performance'
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        const camera = new THREE.PerspectiveCamera(
+            75, 
+            window.innerWidth / window.innerHeight, 
+            0.1, 
+            10000
+        );
+        camera.position.set(0, 2, 5);
+
+        // First-person camera controller
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        const PI_2 = Math.PI / 2;
+        let isPointerLocked = false;
+        
+        // Movement state
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let moveUp = false, moveDown = false;
+        let isRunning = false;
+        
+        const moveSpeed = 5.0;
+        const runMultiplier = 2.5;
+        const mouseSensitivity = 0.002;
+        
+        // Mouse look
+        function onMouseMove(event) {
+            if (!isPointerLocked) return;
+            
+            const movementX = event.movementX || 0;
+            const movementY = event.movementY || 0;
+            
+            euler.setFromQuaternion(camera.quaternion);
+            euler.y -= movementX * mouseSensitivity;
+            euler.x -= movementY * mouseSensitivity;
+            euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x));
+            camera.quaternion.setFromEuler(euler);
+        }
+        
+        // Pointer lock
+        renderer.domElement.addEventListener('click', () => {
+            renderer.domElement.requestPointerLock();
+        });
+        
+        document.addEventListener('pointerlockchange', () => {
+            isPointerLocked = document.pointerLockElement === renderer.domElement;
+        });
+        
+        document.addEventListener('mousemove', onMouseMove);
+        
+        // Keyboard controls
+        document.addEventListener('keydown', (event) => {
+            switch (event.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyD': moveRight = true; break;
+                case 'KeyQ': moveUp = true; break;
+                case 'KeyE': moveDown = true; break;
+                case 'ShiftLeft': 
+                case 'ShiftRight': 
+                    isRunning = true; 
+                    break;
+            }
+        });
+        
+        document.addEventListener('keyup', (event) => {
+            switch (event.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyD': moveRight = false; break;
+                case 'KeyQ': moveUp = false; break;
+                case 'KeyE': moveDown = false; break;
+                case 'ShiftLeft':
+                case 'ShiftRight':
+                    isRunning = false;
+                    break;
+            }
+        });
+        
+        // Floor grid (will be positioned when data loads)
+        let gridHelper = null;
+        let axesHelper = null;
+
+        // Gaussian Splat Renderer
+        let splatRenderer = null;
+        // LOD level: 0=highest detail (20M+), 4=medium (~1.5M), 6=lowest (300K)
+        const loader = new LCCLoader({ targetLOD:1 }); // Level 4 = ~1.5M splats
+
+        // FPS counter
+        let frameCount = 0;
+        let lastTime = performance.now();
+        
+        // Stats
+        const splatCountEl = document.getElementById('splat-count');
+        const totalCountEl = document.getElementById('total-count');
+        const fpsEl = document.getElementById('fps');
+        const sortTimeEl = document.getElementById('sort-time');
+        const loadingEl = document.getElementById('loading');
+        const loadProgressEl = document.getElementById('load-progress');
+
+        // Load LCC data
+        async function loadLCC(basePath) {
+            loadingEl.classList.remove('hidden');
+            
+            // Show source in loading message
+            const isRemote = basePath.startsWith('http://') || basePath.startsWith('https://');
+            const sourceName = isRemote ? new URL(basePath).hostname : 'local';
+            loadProgressEl.textContent = `Loading from ${sourceName}...`;
+            
+            try {
+                const data = await loader.load(basePath, (progress) => {
+                    loadProgressEl.textContent = `${sourceName}: ${(progress * 100).toFixed(1)}%`;
+                });
+                
+                console.log('LCC Data loaded:', data);
+                
+                // Create splat renderer
+                if (splatRenderer) {
+                    scene.remove(splatRenderer.mesh);
+                    splatRenderer.dispose();
+                }
+                
+                splatRenderer = new GaussianSplatRenderer(renderer, camera);
+                await splatRenderer.init(data);
+                
+                scene.add(splatRenderer.mesh);
+                
+                splatCountEl.textContent = data.splatCount.toLocaleString();
+                totalCountEl.textContent = data.totalSplats.toLocaleString();
+                
+                // Show data source
+                const dataSourceEl = document.getElementById('data-source');
+                if (dataSourceEl) {
+                    if (isRemote) {
+                        dataSourceEl.textContent = `Source: ${sourceName}`;
+                        dataSourceEl.style.color = '#7af';
+                    } else {
+                        dataSourceEl.textContent = 'Source: local';
+                    }
+                }
+                
+                // Create floor grid based on scene size
+                // After mesh rotation: LCC Z-up becomes Three.js Y-up
+                if (data.boundingBox) {
+                    const sceneSize = Math.max(
+                        data.boundingBox.max[0] - data.boundingBox.min[0],  // X width
+                        data.boundingBox.max[1] - data.boundingBox.min[1]   // Y depth
+                    );
+                    const gridSize = Math.ceil(sceneSize * 1.5);
+                    const gridDivisions = Math.min(100, gridSize * 2);
+                    
+                    // Remove old grid if exists
+                    if (gridHelper) scene.remove(gridHelper);
+                    if (axesHelper) scene.remove(axesHelper);
+                    
+                    // Create new grid at floor level (brighter for visibility)
+                    gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x666666, 0x333333);
+                    // After -90° X rotation: LCC Z becomes Three.js Y, LCC Y becomes -Three.js Z
+                    // LCC min Z is the floor
+                    const floorY = data.boundingBox.min[2] - 0.5;
+                    gridHelper.position.y = floorY;
+                    scene.add(gridHelper);
+                    
+                    // Add subtle axes for orientation (X=red, Y=green, Z=blue)
+                    axesHelper = new THREE.AxesHelper(gridSize * 0.15);
+                    axesHelper.position.y = floorY + 0.02;
+                    scene.add(axesHelper);
+                    
+                    console.log(`Grid created: size=${gridSize}, divisions=${gridDivisions}, floorY=${floorY}`);
+                }
+                
+                // Center camera on scene with architectural perspective
+                // After mesh rotation -90° around X: LCC (X,Y,Z) -> Three.js (X, Z, -Y)
+                if (data.boundingBox) {
+                    const center = new THREE.Vector3(
+                        (data.boundingBox.min[0] + data.boundingBox.max[0]) / 2,
+                        (data.boundingBox.min[2] + data.boundingBox.max[2]) / 2,  // LCC Z -> Y
+                        -(data.boundingBox.min[1] + data.boundingBox.max[1]) / 2  // LCC Y -> -Z
+                    );
+                    const size = new THREE.Vector3(
+                        data.boundingBox.max[0] - data.boundingBox.min[0],
+                        data.boundingBox.max[2] - data.boundingBox.min[2],  // Height
+                        data.boundingBox.max[1] - data.boundingBox.min[1]   // Depth
+                    );
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    
+                    // Position camera at eye height looking at center
+                    const eyeHeight = center.y + size.y * 0.1;
+                    const viewDistance = maxDim * 1.5;
+                    
+                    camera.position.set(
+                        center.x - viewDistance * 0.5,
+                        eyeHeight + viewDistance * 0.3,
+                        center.z + viewDistance
+                    );
+                    
+                    // Point camera at center
+                    camera.lookAt(center);
+                    euler.setFromQuaternion(camera.quaternion);
+                }
+                
+            } catch (error) {
+                console.error('Failed to load LCC:', error);
+                console.error('Attempted path:', basePath);
+                let errorMsg = error.message;
+                
+                // Provide helpful error messages
+                if (error.message.includes('403')) {
+                    errorMsg = 'Access denied (403). CloudFront/server must have CORS enabled and proper permissions.';
+                    console.error('CORS headers required: Access-Control-Allow-Origin, Access-Control-Allow-Methods');
+                    console.error('Check CloudFront/S3 bucket CORS configuration');
+                } else if (error.message.includes('fetch') || error.message.includes('CORS')) {
+                    errorMsg = 'CORS error: Remote server must allow cross-origin requests';
+                } else if (error.message.includes('404') || error.message.includes('File not found')) {
+                    errorMsg = 'File not found (404) - check URL path';
+                } else if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
+                    errorMsg = 'Network error - check URL and CORS configuration';
+                }
+                
+                loadProgressEl.textContent = `Error: ${errorMsg}`;
+                loadProgressEl.style.color = '#f88';
+                
+                // Show troubleshooting info
+                const infoEl = document.createElement('p');
+                infoEl.style.cssText = 'font-size: 10px; color: #f88; margin-top: 8px; line-height: 1.4;';
+                infoEl.innerHTML = `
+                    <strong>Troubleshooting:</strong><br>
+                    • Check browser console for details<br>
+                    • Verify URL is accessible: <a href="${basePath}meta.lcc" target="_blank" style="color: #7af;">Test Link</a><br>
+                    • CloudFront needs CORS policy enabled
+                `;
+                
+                if (loadProgressEl.nextElementSibling?.classList?.contains('error-help')) {
+                    loadProgressEl.nextElementSibling.remove();
+                }
+                infoEl.classList.add('error-help');
+                loadProgressEl.parentNode.insertBefore(infoEl, loadProgressEl.nextSibling);
+                
+                return;
+            }
+            
+            loadingEl.classList.add('hidden');
+        }
+
+        // Animation loop
+        const clock = new THREE.Clock();
+        const moveVector = new THREE.Vector3();
+        const forward = new THREE.Vector3();
+        const right = new THREE.Vector3();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const delta = clock.getDelta();
+            
+            // Handle movement
+            if (moveForward || moveBackward || moveLeft || moveRight || moveUp || moveDown) {
+                const speed = moveSpeed * (isRunning ? runMultiplier : 1.0) * delta;
+                
+                moveVector.set(0, 0, 0);
+                
+                camera.getWorldDirection(forward);
+                right.crossVectors(forward, camera.up).normalize();
+                
+                // Horizontal movement
+                forward.y = 0;
+                forward.normalize();
+                
+                if (moveForward) moveVector.addScaledVector(forward, speed);
+                if (moveBackward) moveVector.addScaledVector(forward, -speed);
+                if (moveRight) moveVector.addScaledVector(right, speed);
+                if (moveLeft) moveVector.addScaledVector(right, -speed);
+                
+                // Vertical movement
+                if (moveUp) moveVector.y += speed;
+                if (moveDown) moveVector.y -= speed;
+                
+                camera.position.add(moveVector);
+            }
+            
+            if (splatRenderer) {
+                splatRenderer.update(camera);
+                sortTimeEl.textContent = splatRenderer.sortTime.toFixed(1);
+            }
+            
+            renderer.render(scene, camera);
+            
+            // FPS calculation
+            frameCount++;
+            const now = performance.now();
+            if (now - lastTime >= 1000) {
+                fpsEl.textContent = frameCount;
+                frameCount = 0;
+                lastTime = now;
+            }
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            if (splatRenderer) {
+                splatRenderer.resize(window.innerWidth, window.innerHeight);
+            }
+        });
+
+        // Drag and drop support
+        const dropZone = document.getElementById('drop-zone');
+        
+        document.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('active');
+        });
+        
+        document.addEventListener('dragleave', (e) => {
+            if (e.relatedTarget === null) {
+                dropZone.classList.remove('active');
+            }
+        });
+        
+        document.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('active');
+            
+            // Handle dropped files
+            const items = e.dataTransfer.items;
+            for (const item of items) {
+                if (item.kind === 'file') {
+                    const entry = item.webkitGetAsEntry?.();
+                    if (entry?.isDirectory) {
+                        // Handle directory drop
+                        console.log('Directory dropped:', entry.name);
+                        // Would need to implement directory reading
+                    } else {
+                        const file = item.getAsFile();
+                        if (file.name === 'meta.lcc') {
+                            // Handle meta.lcc file
+                            console.log('meta.lcc dropped');
+                        }
+                    }
+                }
+            }
+        });
+
+        // URL parameter support
+        const urlParams = new URLSearchParams(window.location.search);
+        let dataPath = urlParams.get('data');
+        
+        if (dataPath) {
+            // Keep URL encoding as-is (don't decode %20, etc.)
+            // The loader will handle .lcc files vs directory paths
+            console.log('Loading LCC from:', dataPath);
+            loadLCC(dataPath);
+        } else {
+            // Load sample data by default
+            console.log('No data parameter, loading local sample');
+            loadLCC('../lcc-sample-level2/');
+        }
+
+        // Start animation
+        animate();
+
+        // Expose for debugging
+        window.loadLCC = loadLCC;
+        window.splatRenderer = () => splatRenderer;
+        window.THREE = THREE;
+    </script>
+</body>
+</html>
+

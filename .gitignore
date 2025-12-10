@@ -1,0 +1,9 @@
+# Reference documentation
+/ref/
+
+**/*.bin
+**/*.lcc
+**/*.lci
+**/*.lcp
+**/*.jpg
+**/.DS_Store

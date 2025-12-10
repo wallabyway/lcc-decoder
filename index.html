@@ -137,8 +137,8 @@
     <script type="importmap">
     {
         "imports": {
-            "three": "../ref/LCC-Web-0.5.3/examples/engine/three/three.module.js",
-            "three/addons/": "../ref/LCC-Web-0.5.3/examples/engine/three/jsm/"
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
         }
     }
     </script>
@@ -245,7 +245,7 @@
         // Gaussian Splat Renderer
         let splatRenderer = null;
         // LOD level: 0=highest detail (20M+), 4=medium (~1.5M), 6=lowest (300K)
-        const loader = new LCCLoader({ targetLOD:1 }); // Level 4 = ~1.5M splats
+        const loader = new LCCLoader({ targetLOD:4 }); // Level 1 = high detail
 
         // FPS counter
         let frameCount = 0;
@@ -330,35 +330,10 @@
                     console.log(`Grid created: size=${gridSize}, divisions=${gridDivisions}, floorY=${floorY}`);
                 }
                 
-                // Center camera on scene with architectural perspective
-                // After mesh rotation -90° around X: LCC (X,Y,Z) -> Three.js (X, Z, -Y)
-                if (data.boundingBox) {
-                    const center = new THREE.Vector3(
-                        (data.boundingBox.min[0] + data.boundingBox.max[0]) / 2,
-                        (data.boundingBox.min[2] + data.boundingBox.max[2]) / 2,  // LCC Z -> Y
-                        -(data.boundingBox.min[1] + data.boundingBox.max[1]) / 2  // LCC Y -> -Z
-                    );
-                    const size = new THREE.Vector3(
-                        data.boundingBox.max[0] - data.boundingBox.min[0],
-                        data.boundingBox.max[2] - data.boundingBox.min[2],  // Height
-                        data.boundingBox.max[1] - data.boundingBox.min[1]   // Depth
-                    );
-                    const maxDim = Math.max(size.x, size.y, size.z);
-                    
-                    // Position camera at eye height looking at center
-                    const eyeHeight = center.y + size.y * 0.1;
-                    const viewDistance = maxDim * 1.5;
-                    
-                    camera.position.set(
-                        center.x - viewDistance * 0.5,
-                        eyeHeight + viewDistance * 0.3,
-                        center.z + viewDistance
-                    );
-                    
-                    // Point camera at center
-                    camera.lookAt(center);
-                    euler.setFromQuaternion(camera.quaternion);
-                }
+                // Set camera to saved starting position
+                camera.position.set(2.05, 0.47, -0.99);
+                euler.set(-0.1580, 2.3404, 0.0000, 'YXZ');
+                camera.quaternion.setFromEuler(euler);
                 
             } catch (error) {
                 console.error('Failed to load LCC:', error);
@@ -514,9 +489,9 @@
             console.log('Loading LCC from:', dataPath);
             loadLCC(dataPath);
         } else {
-            // Load sample data by default
-            console.log('No data parameter, loading local sample');
-            loadLCC('../lcc-sample-level2/');
+            // Load sample data by default (from CloudFront as documented in README)
+            console.log('No data parameter, loading remote sample');
+            loadLCC('https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc');
         }
 
         // Start animation
@@ -526,6 +501,8 @@
         window.loadLCC = loadLCC;
         window.splatRenderer = () => splatRenderer;
         window.THREE = THREE;
+        window.camera = camera;
+        window.euler = euler;
     </script>
 </body>
 </html>

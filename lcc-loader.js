@@ -122,7 +122,7 @@ export class LCCLoader {
             rotations[i * 4] = q[0];
             rotations[i * 4 + 1] = q[1];
             rotations[i * 4 + 2] = q[2];
-            rotations[i * 4 + 3] = -q[3]; // Negate W for coordinate system
+            rotations[i * 4 + 3] = -q[3];
 
             // Compute covariance
             const cov = this.computeCov3D(

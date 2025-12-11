@@ -126,6 +126,23 @@ LCC format uses **Z-up coordinates** while Three.js uses **Y-up coordinates**. T
 - Web Worker for background depth sorting
 - Three.js coordinate system (negative Z forward)
 
+### Depth Sorting Algorithm
+
+The renderer uses a **16-bit counting sort** for depth ordering, based on [antimatter15/splat](https://github.com/antimatter15/splat). This was chosen over other algorithms for performance:
+
+| Algorithm | Time | Complexity |
+|-----------|------|------------|
+| `Array.sort` | ~0.9s | O(n log n) |
+| Quick sort | ~0.4s | O(n log n) |
+| **Count sort** | **~0.3s** | **O(n)** ✅ |
+
+The counting sort is fastest because:
+- **Single pass** - radix sort needs 4 passes for 32-bit values
+- **No comparisons** - just bucket by quantized depth value
+- **16-bit precision is sufficient** - we only need relative depth order
+
+All sorting and attribute reordering happens in a Web Worker to keep the main thread responsive.
+
 
 ## License
 

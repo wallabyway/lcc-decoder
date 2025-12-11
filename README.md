@@ -4,6 +4,8 @@ A reference LCC Decoder in js - minimal Three.js viewer of 3D Gaussian Splats da
 
 ### **Demo:** [wallabyway.github.io/lcc-decoder/](wallabyway.github.io/lcc-decoder/)
 
+https://github.com/user-attachments/assets/24949ce9-44cf-4daf-bfe1-ef657e382c07
+
 ![Image](https://github.com/user-attachments/assets/e272e4e5-f11e-4f72-a904-2e2d6e08889f)
 
 
@@ -114,9 +116,6 @@ Rendering adapted entirely from [kishimisu/Gaussian-Splatting-WebGL](https://git
 - Web Worker for background depth sorting
 - Three.js coordinate system (negative Z forward)
 
-#### Video:
-
-https://github.com/user-attachments/assets/8b085947-3500-4f9e-9d44-36a5b76ad619
 
 ### Coordinate System
 

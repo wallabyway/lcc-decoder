@@ -2,7 +2,9 @@
 
 A reference LCC Decoder in js - minimal Three.js viewer of 3D Gaussian Splats data decoded from XGRIDS "LCC" Format (Lixel CyberColor).
 
-### **Demo:** [wallabyway.github.io/lcc-decoder/](wallabyway.github.io/lcc-decoder/)
+### **Demos: ** 
+- This demo: https://wallabyway.github.io/lcc-decoder/
+- XGRIDS web viewer [demo](https://lcc-viewer.xgrids.com/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc)
 
 https://github.com/user-attachments/assets/24949ce9-44cf-4daf-bfe1-ef657e382c07
 
@@ -13,9 +15,16 @@ https://github.com/user-attachments/assets/24949ce9-44cf-4daf-bfe1-ef657e382c07
 
 ## Features
 
--  **LCC Format Support** - Loads and decodes LCC data files (meta.lcc is json). Uses `Index.bin` to choose LOD and spatial blobs inside `Data.bin`. Streaming via Range GET requests
+### LCC Format Support
+- Loads and decodes LCC data files (the `meta.lcc` is json, see `LCC Data Format` below ).
+- Loads the `index.bin` as a guide on where to find byte offset to binary chunks in the `data.bin` which reference different Level of Detail streams and spatial streams.
+- The `index.bin` contains 2D grid spatial regions.  Use this for spatial streaming with LODs
+- this example uses Range GET requests, to stream a 24MB portion of the 2GB `data.bin` - to display LOD 4.  The same can be done for spatial streaming of a 2D grid.
+
+### Misc
 -  **Three.js Integration** - Custom 3DGS Frag/Vert shader with material for gaussian splat rendering, using `DepthFirstSort`.
 -  **Depth Sorting** - simple depth sorting via CPU Web Worker for proper transparency - hence the 'popping'
+
 
 ## File Structure
 
@@ -48,9 +57,6 @@ root/
 http://localhost:8000/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc
    ```
 
-## Demo:
-
-https://lcc-viewer.xgrids.com/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc
 
 ## LCC Data Format
 

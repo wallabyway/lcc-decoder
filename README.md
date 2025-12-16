@@ -1,12 +1,30 @@
 # LCC 3D Gaussian Splatting Viewer
 
-A minimal Three.js-based viewer for rendering LCC (Lixel CyberColor) format 3D Gaussian Splatting data.
+A reference LCC Decoder in js - minimal Three.js viewer of 3D Gaussian Splats data decoded from XGRIDS "LCC" Format (Lixel CyberColor).
+
+### **Demos: ** 
+- This demo: https://wallabyway.github.io/lcc-decoder/
+- XGRIDS web viewer [demo](https://lcc-viewer.xgrids.com/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc)
+
+https://github.com/user-attachments/assets/24949ce9-44cf-4daf-bfe1-ef657e382c07
+
+![Image](https://github.com/user-attachments/assets/e272e4e5-f11e-4f72-a904-2e2d6e08889f)
+
+
+> Note: install the `allow CORS` [chrome extension](https://chromewebstore.google.com/detail/allow-cors-access-control/lhobafahddgcelffkeicbaginigeejlf)
 
 ## Features
 
-- ✅ **LCC Format Support** - Loads and decodes LCC data files (meta.lcc, Data.bin, Index.bin)
-- ✅ **Three.js Integration** - Custom shader material for gaussian splat rendering
-- ✅ **Depth Sorting** - Web Worker-based depth sorting for proper transparency
+### LCC Format Support
+- Loads and decodes LCC data files (the `meta.lcc` is json, see `LCC Data Format` below ).
+- Loads the `index.bin` as a guide on where to find byte offset to binary chunks in the `data.bin` which reference different Level of Detail streams and spatial streams.
+- The `index.bin` contains 2D grid spatial regions.  Use this for spatial streaming with LODs
+- this example uses Range GET requests, to stream a 24MB portion of the 2GB `data.bin` - to display LOD 4.  The same can be done for spatial streaming of a 2D grid.
+
+### Misc
+-  **Three.js Integration** - Custom 3DGS Frag/Vert shader with material for gaussian splat rendering, using `DepthFirstSort`.
+-  **Depth Sorting** - simple depth sorting via CPU Web Worker for proper transparency - hence the 'popping'
+
 
 ## File Structure
 
@@ -14,7 +32,7 @@ A minimal Three.js-based viewer for rendering LCC (Lixel CyberColor) format 3D G
 root/
 ├── index.html          # minimal Three js viewer
 ├── lcc-loader.js       # LCC format decoder
-├── splat-renderer.js   # Three.js gaussian splat renderer
+├── splat-renderer.js   # Three.js gaussian splat renderer (Frag and Vert shaders)
 └── README.md          # This file
 ```
 
@@ -30,18 +48,15 @@ root/
    http://localhost:8000/
    ```
 
-3. **Load remote LCC data:**
+(optional) **Load remote LCC data from URL:**
 
-   Showroom Sample: https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc
+   Example URL: https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc
 
    Add a `?data=` parameter with the URL to the LCC file or directory:
    ```
 http://localhost:8000/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc
    ```
 
-## Demo:
-
-https://lcc-viewer.xgrids.com/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc
 
 ## LCC Data Format
 
@@ -88,30 +103,11 @@ Lower LOD numbers = more detail but slower performance.
 
 ## Implementation Details
 
-### Coordinate System
-
-LCC format uses **Z-up coordinates** while Three.js uses **Y-up coordinates**. The viewer handles this during the loading process (3 line code changes):
 
 ### LCC Decoder (`lcc-loader.js`)
-
-```javascript
- // Position: bytes 0-11 (3x float32)
-            positions[i * 3 + 0] = view.getFloat32(offset + 0, true);
-            positions[i * 3 + 1] = view.getFloat32(offset + 4, true);
-            positions[i * 3 + 2] = view.getFloat32(offset + 8, true);
-```
-
-```javascript
-// Becomes this:
-//
-// Rotate -90° around X: Z-up → Y-up (LCC to Three.js coordinate system)
-            positions[i * 3 + 0] = view.getFloat32(offset + 0, true);   // X stays X
-            positions[i * 3 + 1] = view.getFloat32(offset + 8, true);   // Z becomes Y
-            positions[i * 3 + 2] = -view.getFloat32(offset + 4, true);  // Y becomes -Z
-```
-
-
-- Reads meta.lcc for scene metadata
+Loads and decodes LCC data files (meta.lcc is json). Uses `Index.bin` to choose LOD and spatial blobs found inside `Data.bin`. Streaming via Range GET requests to do partial loading of `Data.bin`
+- Starts by reading `meta.lcc` json file, for scene metadata
+- Parses Index.bin to find byte offsets of LOD (and x,y regions)
 - Parses Data.bin with proper byte offsets
 - Decodes compressed rotation quaternions using lookup table
 - Interpolates scales using min/max from metadata
@@ -119,32 +115,33 @@ LCC format uses **Z-up coordinates** while Three.js uses **Y-up coordinates**. T
 
 ### Renderer (`splat-renderer.js`)
 
-- Adapted from [kishimisu/Gaussian-Splatting-WebGL](https://github.com/kishimisu/Gaussian-Splatting-WebGL)
+Rendering adapted entirely from [kishimisu/Gaussian-Splatting-WebGL](https://github.com/kishimisu/Gaussian-Splatting-WebGL)
 - Instanced rendering with quad geometry
 - Custom vertex shader for gaussian projection
 - Fragment shader with EWA splatting
 - Web Worker for background depth sorting
 - Three.js coordinate system (negative Z forward)
 
-### Depth Sorting Algorithm
 
-The renderer uses a **16-bit counting sort** for depth ordering, based on [antimatter15/splat](https://github.com/antimatter15/splat). This was chosen over other algorithms for performance:
+### Coordinate System
 
-| Algorithm | Time | Complexity |
-|-----------|------|------------|
-| `Array.sort` | ~0.9s | O(n log n) |
-| Quick sort | ~0.4s | O(n log n) |
-| **Count sort** | **~0.3s** | **O(n)** ✅ |
+LCC format uses **Z-up coordinates** while Three.js uses **Y-up coordinates**. The viewer handles this via forcing camera-up nav.  This may change (idk).
 
-The counting sort is fastest because:
-- **Single pass** - radix sort needs 4 passes for 32-bit values
-- **No comparisons** - just bucket by quantized depth value
-- **16-bit precision is sufficient** - we only need relative depth order
 
-All sorting and attribute reordering happens in a Web Worker to keep the main thread responsive.
+### XGRIDS Specs, Sample Data and More
+- XGRIDS Viewer Demo using their SDK: https://lcc-viewer.xgrids.com/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc
+- XGRIDS Web SDK: https://developer.xgrids.com/#/download?page=LCC_WEB_SDK
+- More LCC Sample scenes from XGRIDS: [https://developer.xgrids.com/#/download?page=LCC_WEB_SDK](https://developer.xgrids.com/#/download?page=sampledata)
 
+![Image](https://github.com/user-attachments/assets/19e734b9-b2c2-487b-8ab8-853293bb3f18)
+
+### Sharing LCC with SuperSplat
+- Supersplat announce support for LCC: https://www.reddit.com/r/PlayCanvas/comments/1obkf4x/supersplat_2120_xgrids_lcc_support_flood_fill/
+- Editing LCC inside SuperSplat editor: https://superspl.at/editor?load=https://raw.githubusercontent.com/willeastcott/assets/main/lcc/bigmirror/meta.lcc&focal=-2,1,1.75&distance=0.8&camera.overlay=false
+- Autodesk ACC with LCC - DevCon2024 Presentation  - https://aps.autodesk.com/blog/devcon-amsterdam-ssa-workshops-x-grids-gaussian-splats-meetup
 
 ## License
+MIT
 
 Data Organization Format originated from XGRIDS.
 

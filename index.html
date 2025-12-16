@@ -12,10 +12,11 @@
         #ldr.on { opacity: 1; }
         #lod { position: fixed; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; font: 11px system-ui; color: #888; }
         #lod input { width: 80px; accent-color: #fff; }
+        #splat-c { margin-left: 8px; color: #aaa; }
     </style>
 </head>
 <body>
-    <div id="lod"><span>LOD</span><input type="range" min="0" max="6" value="4"><span id="lod-v">4</span></div>
+    <div id="lod"><span>LOD</span><input type="range" min="0" max="6" value="4"><span id="lod-v">4</span><span id="splat-c"></span></div>
     <svg id="ldr" width="24" height="24" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="10" fill="none" stroke="#333" stroke-width="2"/>
         <circle id="ldr-p" cx="12" cy="12" r="10" fill="none" stroke="#fff" stroke-width="2" 
@@ -86,7 +87,7 @@
         let splatRenderer = null, currentPath = null;
         const loader = new LCCLoader({ targetLOD: 4 });
         const ldr = document.getElementById('ldr'), ldrP = document.getElementById('ldr-p');
-        const lodSlider = document.querySelector('#lod input'), lodVal = document.getElementById('lod-v');
+        const lodSlider = document.querySelector('#lod input'), lodVal = document.getElementById('lod-v'), splatC = document.getElementById('splat-c');
         const setProgress = p => { ldrP.style.strokeDashoffset = 62.83 * (1 - p); };
         
         lodSlider.oninput = () => { lodVal.textContent = lodSlider.value; };
@@ -104,6 +105,7 @@
                 splatRenderer = new GaussianSplatRenderer(renderer, camera);
                 await splatRenderer.init(data);
                 scene.add(splatRenderer.mesh);
+                splatC.textContent = (data.splatCount / 1e6).toFixed(2) + 'M';
                 ldr.classList.remove('on');
 
                 // Grid (Y-up, flat on XZ plane)

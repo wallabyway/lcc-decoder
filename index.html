@@ -8,9 +8,21 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { height: 100%; overflow: hidden; background: #0a0a0f; }
         canvas { display: block; }
+        #ldr { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); opacity: 0; transition: opacity .2s; }
+        #ldr.on { opacity: 1; }
+        #lod { position: fixed; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; font: 11px system-ui; color: #888; }
+        #lod input { width: 80px; accent-color: #fff; }
+        #splat-c { margin-left: 8px; color: #aaa; }
     </style>
 </head>
 <body>
+    <div id="lod"><span>LOD</span><input type="range" min="0" max="6" value="4"><span id="lod-v">4</span><span id="splat-c"></span></div>
+    <svg id="ldr" width="24" height="24" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="none" stroke="#333" stroke-width="2"/>
+        <circle id="ldr-p" cx="12" cy="12" r="10" fill="none" stroke="#fff" stroke-width="2" 
+                stroke-dasharray="62.83" stroke-dashoffset="62.83" stroke-linecap="round"
+                transform="rotate(-90 12 12)"/>
+    </svg>
     <script type="importmap">
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
     </script>
@@ -29,24 +41,24 @@
         renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
 
-        const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 10000);
-        camera.up.set(0, 0, 1);
-        camera.position.set(1.437, 0.830, 0.345);
-        camera.rotation.set(-1.365, 0.719, 3.005);
+        const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 10000);
+        // Default Three.js Y-up camera
+        camera.position.set(1.437, 0.345, -0.830);
+        camera.rotation.set(0, 0, 0);
 
-        // First-person controls (Z-up)
-        const euler = new THREE.Euler(0, 0, 0, 'ZXY');
+        // First-person controls (Y-up) with damping
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        const targetEuler = new THREE.Euler(0, 0, 0, 'YXZ');
         const PI_2 = Math.PI / 2;
         let isLocked = false;
         let moveF = false, moveB = false, moveL = false, moveR = false, moveU = false, moveD = false, running = false;
-        const speed = 5.0, runMult = 2.5, sens = 0.002;
+        const speed = 0.8, runMult = 4.5, sens = 0.002, lookDamping = 0.15, moveDamping = 0.1, pivotOffset = 0.15;
 
         document.addEventListener('mousemove', e => {
             if (!isLocked) return;
-            euler.setFromQuaternion(camera.quaternion, 'ZXY');
-            euler.z -= e.movementX * sens;
-            euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x - e.movementY * sens));
-            camera.quaternion.setFromEuler(euler);
+            // Update target rotation (will be smoothed in animate loop)
+            targetEuler.y -= e.movementX * sens;
+            targetEuler.x = Math.max(-PI_2, Math.min(PI_2, targetEuler.x - e.movementY * sens));
         });
 
         renderer.domElement.addEventListener('click', () => renderer.domElement.requestPointerLock());
@@ -72,53 +84,76 @@
         });
 
         // Splat renderer
-        let splatRenderer = null;
-        const loader = new LCCLoader({ targetLOD: 2 });
+        let splatRenderer = null, currentPath = null;
+        const loader = new LCCLoader({ targetLOD: 4 });
+        const ldr = document.getElementById('ldr'), ldrP = document.getElementById('ldr-p');
+        const lodSlider = document.querySelector('#lod input'), lodVal = document.getElementById('lod-v'), splatC = document.getElementById('splat-c');
+        const setProgress = p => { ldrP.style.strokeDashoffset = 62.83 * (1 - p); };
+        
+        lodSlider.oninput = () => { lodVal.textContent = lodSlider.value; };
+        lodSlider.onchange = () => { 
+            loader.targetLOD = parseInt(lodSlider.value); 
+            if (currentPath) loadLCC(currentPath); 
+        };
 
         async function loadLCC(basePath) {
             try {
-                const data = await loader.load(basePath);
+                currentPath = basePath;
+                ldr.classList.add('on');
+                const data = await loader.load(basePath, setProgress);
                 if (splatRenderer) { scene.remove(splatRenderer.mesh); splatRenderer.dispose(); }
                 splatRenderer = new GaussianSplatRenderer(renderer, camera);
                 await splatRenderer.init(data);
                 scene.add(splatRenderer.mesh);
+                splatC.textContent = (data.splatCount / 1e6).toFixed(2) + 'M';
+                ldr.classList.remove('on');
 
-                // Grid
+                // Grid (Y-up, flat on XZ plane)
                 const bb = data.boundingBox;
-                const sz = Math.ceil(Math.max(bb.max[0] - bb.min[0], bb.max[1] - bb.min[1]) * 1.5);
+                const sz = Math.ceil(Math.max(bb.max[0] - bb.min[0], bb.max[2] - bb.min[2]) * 1.5);
                 const grid = new THREE.GridHelper(sz, Math.min(100, sz * 2), 0x666666, 0x333333);
-                grid.rotation.x = PI_2;
-                grid.position.z = bb.min[2] - 0.5;
+                grid.position.y = bb.min[1] - 0.5;
                 scene.add(grid);
-            } catch (e) { console.error('Load failed:', e); }
+            } catch (e) { console.error('Load failed:', e); ldr.classList.remove('on'); }
         }
 
-        // Animation
+        // Animation - use setAnimationLoop for better high-refresh-rate support
         const clock = new THREE.Clock();
-        const mv = new THREE.Vector3(), fwd = new THREE.Vector3(), right = new THREE.Vector3();
+        const velocity = new THREE.Vector3(), targetVel = new THREE.Vector3();
+        const fwd = new THREE.Vector3(), right = new THREE.Vector3(), pivot = new THREE.Vector3();
 
-        function animate() {
-            requestAnimationFrame(animate);
+        renderer.setAnimationLoop(() => {
             const dt = clock.getDelta();
 
-            if (moveF || moveB || moveL || moveR || moveU || moveD) {
-                const s = speed * (running ? runMult : 1) * dt;
-                mv.set(0, 0, 0);
-                camera.getWorldDirection(fwd);
-                right.crossVectors(fwd, camera.up).normalize();
-                fwd.z = 0; fwd.normalize();
-                if (moveF) mv.addScaledVector(fwd, s);
-                if (moveB) mv.addScaledVector(fwd, -s);
-                if (moveR) mv.addScaledVector(right, s);
-                if (moveL) mv.addScaledVector(right, -s);
-                if (moveU) mv.z += s;
-                if (moveD) mv.z -= s;
-                camera.position.add(mv);
-            }
+            // Smooth camera rotation with damping + pivot parallax
+            camera.getWorldDirection(fwd);
+            pivot.copy(camera.position).addScaledVector(fwd, -pivotOffset); // Pivot behind camera
+            euler.x += (targetEuler.x - euler.x) * lookDamping;
+            euler.y += (targetEuler.y - euler.y) * lookDamping;
+            camera.quaternion.setFromEuler(euler);
+            camera.getWorldDirection(fwd);
+            camera.position.copy(pivot).addScaledVector(fwd, pivotOffset); // Orbit around pivot
+
+            // Calculate target velocity based on input
+            const s = speed * (running ? runMult : 1);
+            targetVel.set(0, 0, 0);
+            camera.getWorldDirection(fwd);
+            right.crossVectors(fwd, camera.up).normalize();
+            fwd.y = 0; fwd.normalize();
+            if (moveF) targetVel.addScaledVector(fwd, s);
+            if (moveB) targetVel.addScaledVector(fwd, -s);
+            if (moveR) targetVel.addScaledVector(right, s);
+            if (moveL) targetVel.addScaledVector(right, -s);
+            if (moveU) targetVel.y += s;
+            if (moveD) targetVel.y -= s;
+
+            // Smooth velocity with damping and apply
+            velocity.lerp(targetVel, moveDamping);
+            camera.position.addScaledVector(velocity, dt);
 
             splatRenderer?.update(camera);
             renderer.render(scene, camera);
-        }
+        });
 
         window.addEventListener('resize', () => {
             camera.aspect = innerWidth / innerHeight;
@@ -129,11 +164,13 @@
 
         // Load from URL param or default
         const dataPath = new URLSearchParams(location.search).get('data');
-        loadLCC(dataPath || 'https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc');
-        animate();
+        loadLCC(dataPath || 'https://d2pqszqfxcodwz.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc');
 
-        // Debug
-        Object.assign(window, { loadLCC, THREE, camera, euler, splatRenderer: () => splatRenderer });
+        // Cull radius helper (0 = no culling)
+        const setCullRadius = (r) => splatRenderer?.setCullRadius(r);
+
+        // Debug - use setCullRadius(10) to cull beyond 10 units
+        Object.assign(window, { loadLCC, THREE, camera, euler, splatRenderer: () => splatRenderer, setCullRadius });
     </script>
 </body>
 </html>

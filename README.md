@@ -82,6 +82,30 @@ data-folder/
 | Rotation  | 22-25  | uint32           | Quaternion (compressed) |
 | Normal    | 26-31  | 3× uint16        | XYZ normal (optional) |
 
+### Index.bin Structure
+
+#### Terminology
+
+| Term  | Definition |
+|-------|------------|
+| Node  | A chunk at a specified LOD level |
+| Index | Used to index the x and y values of a partition chunk, with the x index value in the lower 16 bits and the y value in the upper 16 bits |
+| Unit  | A group of Nodes corresponding to the same Index |
+| Level | One LOD level |
+
+The Index.bin file contains the index for each **Node** chunk. The length is fixed per scene (described by the `indexDataSize` attribute in Meta.lcc), but varies across different scenes based on LOD division. Uses little-endian storage.
+
+| Attribute     | Bytes | Type   | Remarks                                        |
+|---------------|-------|--------|------------------------------------------------|
+| index         | 4     | uint32 | Index of Unit                                  |
+| PointsCount0  | 4     | uint32 | Total number of splats in LOD0                 |
+| LOD0Offset    | 8     | uint64 | Offset of LOD0 data stored in the Data.bin file |
+| LOD0Size      | 4     | uint32 | Total ByteSize of LOD0 Data                    |
+| PointsCount1  | 4     | uint32 | Total number of splats in LOD1                 |
+| LOD1Offset    | 8     | uint64 | Offset of LOD1 data stored in the Data.bin file |
+| LOD1Size      | 4     | uint32 | Total ByteSize of LOD1 Data                    |
+| ...           | ...   | ...    | Pattern continues for additional LOD levels    |
+
 ## Configuration
 
 ### LOD Level

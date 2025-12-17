@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LCC Spatial Streaming Demo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; overflow: hidden; background: #0a0a0f; }
+        canvas { display: block; }
+        #ldr { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); opacity: 0; transition: opacity .2s; }
+        #ldr.on { opacity: 1; }
+        #controls { position: fixed; top: 12px; left: 12px; font: 11px system-ui; color: #888; }
+        #controls > div { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+        #controls input[type="range"] { width: 80px; accent-color: #fff; }
+        #info { color: #aaa; }
+        #grid-map { position: fixed; bottom: 12px; left: 12px; background: rgba(0,0,0,0.7); padding: 8px; border-radius: 4px; font: 10px monospace; color: #888; }
+        #grid-container { position: relative; }
+        #grid-map .cell { display: inline-block; width: 12px; height: 12px; margin: 1px; border-radius: 2px; }
+        #grid-map .cell.empty { background: #222; }
+        #grid-map .cell.available { background: #444; }
+        #grid-map .cell.loaded { background: #4a6; }
+        #grid-map .row { display: flex; }
+        #player-marker {
+            position: absolute;
+            width: 20px; height: 20px;
+            pointer-events: none;
+            z-index: 10;
+            transform: translate(-50%, -50%) rotate(var(--arrow-rotate, 0deg));
+        }
+        #player-marker svg {
+            width: 100%; height: 100%;
+            filter: drop-shadow(0 0 3px #fa0);
+        }
+        #grid-legend { margin-top: 6px; display: flex; gap: 10px; font-size: 9px; }
+        #hint { color: #555; font-size: 10px; margin-top: 4px; }
+        #grid-legend span { display: flex; align-items: center; gap: 3px; }
+        #grid-legend .dot { width: 8px; height: 8px; border-radius: 2px; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <div><span>LOD</span><input type="range" id="lod" min="0" max="6" value="6"><span id="lod-v">6</span></div>
+        <div id="info">Loading...</div>
+        <div id="hint">Click to start, WASD to move, double-click for highLOD</div>
+    </div>
+    
+    <div id="grid-map">
+        <div id="grid-container">
+            <div id="grid-cells"></div>
+            <div id="player-marker">
+                <svg viewBox="0 0 20 20">
+                    <path d="M10 2 L16 14 L10 10 L4 14 Z" fill="#fa0" stroke="#fff" stroke-width="1"/>
+                </svg>
+            </div>
+        </div>
+        <div id="grid-legend">
+            <span><div class="dot" style="background:#444"></div> Available</span>
+            <span><div class="dot" style="background:#4a6"></div> Loaded</span>
+            <span><div class="dot" style="background:#fa0"></div> Camera</span>
+        </div>
+    </div>
+
+    <svg id="ldr" width="24" height="24" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="none" stroke="#333" stroke-width="2"/>
+        <circle id="ldr-p" cx="12" cy="12" r="10" fill="none" stroke="#fff" stroke-width="2" 
+                stroke-dasharray="62.83" stroke-dashoffset="62.83" stroke-linecap="round"
+                transform="rotate(-90 12 12)"/>
+    </svg>
+    
+    <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    </script>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        import { LCCLoader } from './lcc-loader.js';
+        import { GaussianSplatRenderer } from './splat-renderer.js';
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1f);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 10000);
+        camera.position.set(-48.62, 2.72, -7.65);
+
+        // First-person controls
+        const euler = new THREE.Euler(-0.10, -1.47, 0, 'YXZ');
+        const targetEuler = new THREE.Euler(-0.10, -1.47, 0, 'YXZ');
+        const PI_2 = Math.PI / 2;
+        let isLocked = false;
+        let moveF = false, moveB = false, moveL = false, moveR = false, moveU = false, moveD = false, running = false;
+        const speed = 0.8, runMult = 14.5, sens = 0.002, lookDamping = 0.15, moveDamping = 0.1;
+
+        document.addEventListener('mousemove', e => {
+            if (!isLocked) return;
+            targetEuler.y -= e.movementX * sens;
+            targetEuler.x = Math.max(-PI_2, Math.min(PI_2, targetEuler.x - e.movementY * sens));
+        });
+
+        renderer.domElement.addEventListener('click', () => renderer.domElement.requestPointerLock());
+        document.addEventListener('pointerlockchange', () => { isLocked = document.pointerLockElement === renderer.domElement; });
+        
+        // Double-click to load high LOD at camera position
+        renderer.domElement.addEventListener('dblclick', () => loadHighLodHere());
+
+        document.addEventListener('keydown', e => {
+            if (e.code === 'KeyW') moveF = true;
+            if (e.code === 'KeyS') moveB = true;
+            if (e.code === 'KeyA') moveL = true;
+            if (e.code === 'KeyD') moveR = true;
+            if (e.code === 'KeyQ') moveU = true;
+            if (e.code === 'KeyE') moveD = true;
+            if (e.code.startsWith('Shift')) running = true;
+        });
+        document.addEventListener('keyup', e => {
+            if (e.code === 'KeyW') moveF = false;
+            if (e.code === 'KeyS') moveB = false;
+            if (e.code === 'KeyA') moveL = false;
+            if (e.code === 'KeyD') moveR = false;
+            if (e.code === 'KeyQ') moveU = false;
+            if (e.code === 'KeyE') moveD = false;
+            if (e.code.startsWith('Shift')) running = false;
+        });
+
+        // UI elements
+        const ldr = document.getElementById('ldr'), ldrP = document.getElementById('ldr-p');
+        const lodSlider = document.getElementById('lod'), lodVal = document.getElementById('lod-v');
+        const info = document.getElementById('info');
+        const gridCells = document.getElementById('grid-cells');
+        const playerMarker = document.getElementById('player-marker');
+        
+        const setProgress = p => { ldrP.style.strokeDashoffset = 62.83 * (1 - p); };
+        lodSlider.oninput = () => { lodVal.textContent = lodSlider.value; };
+
+        // Loader state
+        const loader = new LCCLoader({ targetLOD: 5 });
+        let splatRenderer = null;
+        let gridInfo = null;
+        let loadedCells = new Map(); // key -> splat data
+        let isLoading = false;
+        let currentLOD = 6;
+
+        lodSlider.onchange = () => { 
+            if (parseInt(lodSlider.value) !== currentLOD) {
+                currentLOD = parseInt(lodSlider.value);
+                loadedCells.clear();
+                loadCellAhead();
+            }
+        };
+
+        // Grid visualization
+        function updateGridMap(currentCell = null) {
+            if (!gridInfo) return;
+            
+            const { bounds, cells } = gridInfo;
+            const cellSet = new Set(cells.map(c => `${c.x},${c.y}`));
+            
+            const camDir = new THREE.Vector3();
+            camera.getWorldDirection(camDir);
+            // +Z world = up in mini-map, +X world = right in mini-map
+            const angle = -Math.atan2(camDir.x, camDir.z) * (180 / Math.PI) + 180;
+            
+            // Update player marker position (float values)
+            const cellSize = loader.meta.cellLengthX;
+            const bb = loader.meta.boundingBox;
+            const floatX = (camera.position.x - bb.min[0]) / cellSize;
+            const floatY = (camera.position.z - bb.min[1]) / cellSize;
+            
+            const cellPixels = 14; // 12px cell + 2px margin
+            const gridWidth = bounds.maxX - bounds.minX + 1;
+            const gridHeight = bounds.maxY - bounds.minY + 1;
+            
+            const pixelX = (floatX - bounds.minX + 0.5) * cellPixels;
+            const pixelY = (gridHeight - (floatY - bounds.minY) - 0.5) * cellPixels;
+            
+            playerMarker.style.left = `${pixelX}px`;
+            playerMarker.style.top = `${pixelY}px`;
+            playerMarker.style.setProperty('--arrow-rotate', `${angle}deg`);
+            
+            let html = '';
+            for (let y = bounds.maxY; y >= bounds.minY; y--) {
+                html += '<div class="row">';
+                for (let x = bounds.minX; x <= bounds.maxX; x++) {
+                    const key = `${x},${y}`;
+                    let cls = 'cell empty';
+                    if (cellSet.has(key)) {
+                        if (loadedCells.has(key)) {
+                            cls = 'cell loaded';
+                        } else {
+                            cls = 'cell available';
+                        }
+                    }
+                    html += `<div class="${cls}" title="(${x},${y})"></div>`;
+                }
+                html += '</div>';
+            }
+            gridCells.innerHTML = html;
+        }
+
+        async function initScene(basePath) {
+            ldr.classList.add('on');
+            setProgress(0.1);
+            
+            gridInfo = await loader.loadIndex(basePath);
+            console.log('Grid info:', gridInfo);
+            
+            lodSlider.max = gridInfo.totalLevels - 1;
+            if (parseInt(lodSlider.value) > gridInfo.totalLevels - 1) {
+                lodSlider.value = gridInfo.totalLevels - 1;
+                lodVal.textContent = lodSlider.value;
+            }
+            
+            updateGridMap(loader.worldToCell(camera.position.x, camera.position.z));
+            
+            const bb = loader.meta.boundingBox;
+            const sz = Math.ceil(Math.max(bb.max[0] - bb.min[0], bb.max[1] - bb.min[1]) * 1.5);
+            const grid = new THREE.GridHelper(sz, Math.min(100, sz * 2), 0x666666, 0x333333);
+            grid.position.y = bb.min[2] - 0.5;
+            scene.add(grid);
+            
+            ldr.classList.remove('on');
+            await loadCellAhead();
+        }
+
+        // Get cell 0.5 tile ahead
+        function getCellAhead() {
+            if (!loader.meta) return null;
+            
+            const cellSize = loader.meta.cellLengthX;
+            const camDir = new THREE.Vector3();
+            camera.getWorldDirection(camDir);
+            camDir.y = 0;
+            camDir.normalize();
+            
+            const aheadX = camera.position.x + camDir.x * cellSize * 0.75;
+            const aheadZ = camera.position.z + camDir.z * cellSize * 0.75;
+            const aheadCell = loader.worldToCell(aheadX, aheadZ);
+            const key = `${aheadCell.x},${aheadCell.y}`;
+            
+            if (loader.spatialGrid?.has(key) && !loadedCells.has(key)) {
+                return { cell: loader.spatialGrid.get(key), key };
+            }
+            return null;
+        }
+
+        // Load cell ahead
+        async function loadCellAhead() {
+            if (isLoading) return;
+            
+            const cellInfo = getCellAhead();
+            if (!cellInfo) return;
+            
+            isLoading = true;
+            ldr.classList.add('on');
+            
+            try {
+                const data = await loader.loadCells([cellInfo.cell], currentLOD, setProgress);
+                if (data.splatCount > 0) {
+                    loadedCells.set(cellInfo.key, data);
+                    console.log(`Loaded: ${cellInfo.key}`);
+                    await updateRenderer();
+                }
+            } catch (e) {
+                console.error('Error loading cell:', e);
+            } finally {
+                ldr.classList.remove('on');
+                isLoading = false;
+            }
+        }
+        
+        // Double-click: clear all and load high LOD at current camera position
+        async function loadHighLodHere() {
+            if (isLoading || !loader.meta) return;
+            
+            const camCell = loader.worldToCell(camera.position.x, camera.position.z);
+            const key = `${camCell.x},${camCell.y}`;
+            
+            if (!loader.spatialGrid?.has(key)) return;
+            
+            isLoading = true;
+            ldr.classList.add('on');
+            
+            try {
+                // Clear all loaded cells
+                loadedCells.clear();
+                
+                const highLOD = 1;
+                const cell = loader.spatialGrid.get(key);
+                const data = await loader.loadCells([cell], highLOD, setProgress);
+                if (data.splatCount > 0) {
+                    loadedCells.set(key, data);
+                    console.log(`Loaded HIGH: ${key} at LOD ${highLOD}`);
+                    await updateRenderer();
+                }
+            } catch (e) {
+                console.error('Error loading high LOD:', e);
+            } finally {
+                ldr.classList.remove('on');
+                isLoading = false;
+            }
+        }
+        
+        async function updateRenderer() {
+            const mergedData = mergeLoadedCells();
+            
+            if (splatRenderer) {
+                scene.remove(splatRenderer.mesh);
+                splatRenderer.dispose();
+            }
+            
+            if (mergedData.splatCount > 0) {
+                splatRenderer = new GaussianSplatRenderer(renderer, camera);
+                await splatRenderer.init(mergedData);
+                scene.add(splatRenderer.mesh);
+            }
+            
+            info.textContent = `${loadedCells.size}/${gridInfo?.cellCount || 0} cells | ${(mergedData.splatCount / 1e6).toFixed(2)}M splats`;
+            updateGridMap(loader.worldToCell(camera.position.x, camera.position.z));
+        }
+
+        function mergeLoadedCells() {
+            const allData = [...loadedCells.values()];
+            
+            if (allData.length === 0) {
+                return loader.createEmptyResult();
+            }
+            
+            let totalCount = 0;
+            for (const data of allData) {
+                totalCount += data.splatCount;
+            }
+            
+            const positions = new Float32Array(totalCount * 3);
+            const colors = new Float32Array(totalCount * 3);
+            const opacities = new Float32Array(totalCount);
+            const scales = new Float32Array(totalCount * 3);
+            const rotations = new Float32Array(totalCount * 4);
+            const cov3Ds = new Float32Array(totalCount * 6);
+            
+            let offset = 0;
+            for (const data of allData) {
+                const n = data.splatCount;
+                positions.set(data.positions, offset * 3);
+                colors.set(data.colors, offset * 3);
+                opacities.set(data.opacities, offset);
+                scales.set(data.scales, offset * 3);
+                rotations.set(data.rotations, offset * 4);
+                cov3Ds.set(data.cov3Ds, offset * 6);
+                offset += n;
+            }
+            
+            return {
+                meta: loader.meta,
+                splatCount: totalCount,
+                totalSplats: loader.meta.totalSplats,
+                boundingBox: loader.meta.boundingBox,
+                positions, colors, opacities, scales, rotations, cov3Ds,
+                sphericalHarmonics: null
+            };
+        }
+
+        // Animation loop
+        const clock = new THREE.Clock();
+        const velocity = new THREE.Vector3(), targetVel = new THREE.Vector3();
+        const fwd = new THREE.Vector3(), right = new THREE.Vector3();
+
+        renderer.setAnimationLoop(() => {
+            const dt = clock.getDelta();
+
+            euler.x += (targetEuler.x - euler.x) * lookDamping;
+            euler.y += (targetEuler.y - euler.y) * lookDamping;
+            camera.quaternion.setFromEuler(euler);
+
+            const s = speed * (running ? runMult : 1);
+            targetVel.set(0, 0, 0);
+            camera.getWorldDirection(fwd);
+            right.crossVectors(fwd, camera.up).normalize();
+            fwd.y = 0; fwd.normalize();
+            if (moveF) targetVel.addScaledVector(fwd, s);
+            if (moveB) targetVel.addScaledVector(fwd, -s);
+            if (moveR) targetVel.addScaledVector(right, s);
+            if (moveL) targetVel.addScaledVector(right, -s);
+            if (moveU) targetVel.y += s;
+            if (moveD) targetVel.y -= s;
+
+            velocity.lerp(targetVel, moveDamping);
+            camera.position.addScaledVector(velocity, dt);
+
+            if (gridInfo) {
+                updateGridMap(loader.worldToCell(camera.position.x, camera.position.z));
+            }
+
+            // Load cell 0.5 ahead if not loaded
+            if (getCellAhead()) {
+                loadCellAhead();
+            }
+
+            splatRenderer?.update(camera);
+            renderer.render(scene, camera);
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = innerWidth / innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(innerWidth, innerHeight);
+            splatRenderer?.resize(innerWidth, innerHeight);
+        });
+
+        const dataPath = new URLSearchParams(location.search).get('data');
+        initScene(dataPath || 'https://public-blogs.s3.amazonaws.com/xgrids/guanlan-ancient-town/meta.lcc');
+
+        Object.assign(window, { loader, camera, loadedCells, THREE });
+    </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 /**
  * LCC (Lixel CyberColor) Format Loader
- * Decodes LCC format for 3D Gaussian Splatting
+ * Decodes LCC format for 3D Gaussian Splatting with Spatial Streaming
  * Data Organization Format originated from XGRIDS
  */
 
@@ -14,6 +14,8 @@ export class LCCLoader {
         this.meta = null;
         this.attributes = {};
         this.targetLOD = options.targetLOD ?? 4;
+        this.spatialGrid = null;  // Map of "x,y" -> cell data
+        this.gridBounds = null;   // { minX, maxX, minY, maxY }
     }
 
     async load(basePath, onProgress = () => {}) {
@@ -28,7 +30,7 @@ export class LCCLoader {
         this.meta = await metaResponse.json();
         this.parseAttributes();
 
-        // Calculate LOD byte range
+        // Calculate LOD byte range (legacy mode - loads entire LOD)
         const splatCounts = this.meta.splats;
         let dataOffset = 0;
         for (let i = 0; i < this.targetLOD; i++) {
@@ -74,6 +76,220 @@ export class LCCLoader {
             boundingBox: this.meta.boundingBox,
             ...splatData,
             sphericalHarmonics: shData
+        };
+    }
+
+    /**
+     * Initialize spatial streaming by loading and parsing Index.bin
+     */
+    async loadIndex(basePath) {
+        // Resolve paths
+        const isLccFile = basePath.endsWith('.lcc');
+        const metaUrl = isLccFile ? basePath : `${basePath.replace(/\/?$/, '/')}/meta.lcc`;
+        this.dataBasePath = isLccFile ? basePath.substring(0, basePath.lastIndexOf('/') + 1) : basePath.replace(/\/?$/, '/');
+
+        // Load metadata if not already loaded
+        if (!this.meta) {
+            const metaResponse = await fetch(metaUrl, { mode: 'cors' });
+            this.meta = await metaResponse.json();
+            this.parseAttributes();
+        }
+
+        // Load and parse Index.bin
+        const indexUrl = `${this.dataBasePath}index.bin`;
+        const indexResponse = await fetch(indexUrl, { mode: 'cors' });
+        const indexBuffer = await indexResponse.arrayBuffer();
+        
+        this.parseIndexBin(indexBuffer);
+        return this.getGridInfo();
+    }
+
+    /**
+     * Parse Index.bin into spatial grid structure
+     */
+    parseIndexBin(buffer) {
+        const view = new DataView(buffer);
+        const indexDataSize = this.meta.indexDataSize;
+        const totalLevels = this.meta.totalLevel;
+        const numUnits = Math.floor(buffer.byteLength / indexDataSize);
+
+        this.spatialGrid = new Map();
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+        for (let i = 0; i < numUnits; i++) {
+            let offset = i * indexDataSize;
+
+            // Read index (x in lower 16 bits, y in upper 16 bits)
+            const indexValue = view.getUint32(offset, true);
+            const cellX = indexValue & 0xFFFF;
+            const cellY = (indexValue >> 16) & 0xFFFF;
+            offset += 4;
+
+            // Track grid bounds
+            minX = Math.min(minX, cellX);
+            maxX = Math.max(maxX, cellX);
+            minY = Math.min(minY, cellY);
+            maxY = Math.max(maxY, cellY);
+
+            // Read LOD data for this cell
+            const lods = [];
+            for (let lod = 0; lod < totalLevels; lod++) {
+                const pointsCount = view.getUint32(offset, true);
+                offset += 4;
+                // Read uint64 offset (as two uint32s, little-endian)
+                const lodOffsetLow = view.getUint32(offset, true);
+                const lodOffsetHigh = view.getUint32(offset + 4, true);
+                const lodOffset = lodOffsetLow + lodOffsetHigh * 0x100000000;
+                offset += 8;
+                const lodSize = view.getUint32(offset, true);
+                offset += 4;
+
+                lods.push({ pointsCount, offset: lodOffset, size: lodSize });
+            }
+
+            this.spatialGrid.set(`${cellX},${cellY}`, {
+                x: cellX,
+                y: cellY,
+                lods
+            });
+        }
+
+        this.gridBounds = { minX, maxX, minY, maxY };
+    }
+
+    /**
+     * Get info about the spatial grid
+     */
+    getGridInfo() {
+        if (!this.spatialGrid) return null;
+        
+        const cells = Array.from(this.spatialGrid.values());
+        return {
+            cellCount: this.spatialGrid.size,
+            bounds: this.gridBounds,
+            cellSize: { x: this.meta.cellLengthX, y: this.meta.cellLengthY },
+            totalLevels: this.meta.totalLevel,
+            cells: cells.map(c => ({ x: c.x, y: c.y }))
+        };
+    }
+
+    /**
+     * Convert world coordinates to cell coordinates
+     */
+    worldToCell(worldX, worldY) {
+        const bb = this.meta.boundingBox;
+        const cellX = Math.floor((worldX - bb.min[0]) / this.meta.cellLengthX);
+        const cellY = Math.floor((worldY - bb.min[1]) / this.meta.cellLengthY);
+        return { x: cellX, y: cellY };
+    }
+
+    /**
+     * Load specific cells at a given LOD level
+     */
+    async loadCells(cells, lod = null, onProgress = () => {}) {
+        lod = lod ?? this.targetLOD;
+        lod = Math.min(lod, this.meta.totalLevel - 1);
+
+        if (!cells || cells.length === 0) {
+            return this.createEmptyResult();
+        }
+
+        // Calculate total splats and prepare range requests
+        let totalSplats = 0;
+        const ranges = [];
+        
+        for (const cell of cells) {
+            const lodData = cell.lods[lod];
+            if (lodData && lodData.pointsCount > 0) {
+                totalSplats += lodData.pointsCount;
+                ranges.push({
+                    cell,
+                    offset: lodData.offset,
+                    size: lodData.size,
+                    count: lodData.pointsCount
+                });
+            }
+        }
+
+        if (totalSplats === 0) {
+            return this.createEmptyResult();
+        }
+
+        onProgress(0.1);
+
+        // Fetch data for all cells (could optimize with merged ranges)
+        const dataUrl = `${this.dataBasePath}data.bin`;
+        const buffers = [];
+        
+        for (let i = 0; i < ranges.length; i++) {
+            const range = ranges[i];
+            const response = await fetch(dataUrl, {
+                mode: 'cors',
+                headers: { 'Range': `bytes=${range.offset}-${range.offset + range.size - 1}` }
+            });
+            
+            if (response.status === 206) {
+                buffers.push(await response.arrayBuffer());
+            } else {
+                // Fallback: server doesn't support range requests
+                const fullBuffer = await response.arrayBuffer();
+                buffers.push(fullBuffer.slice(range.offset, range.offset + range.size));
+            }
+            
+            onProgress(0.1 + 0.4 * ((i + 1) / ranges.length));
+        }
+
+        // Merge buffers and parse
+        const mergedBuffer = this.mergeBuffers(buffers);
+        onProgress(0.5);
+        
+        const splatData = this.parseSplats(new DataView(mergedBuffer), totalSplats, 
+            p => onProgress(0.5 + 0.4 * p));
+
+        onProgress(1.0);
+        
+        return {
+            meta: this.meta,
+            splatCount: totalSplats,
+            totalSplats: this.meta.totalSplats,
+            boundingBox: this.meta.boundingBox,
+            loadedCells: cells.map(c => ({ x: c.x, y: c.y })),
+            ...splatData,
+            sphericalHarmonics: null
+        };
+    }
+
+    /**
+     * Helper to merge multiple ArrayBuffers
+     */
+    mergeBuffers(buffers) {
+        const totalSize = buffers.reduce((sum, b) => sum + b.byteLength, 0);
+        const merged = new Uint8Array(totalSize);
+        let offset = 0;
+        for (const buffer of buffers) {
+            merged.set(new Uint8Array(buffer), offset);
+            offset += buffer.byteLength;
+        }
+        return merged.buffer;
+    }
+
+    /**
+     * Create empty result for when no cells are loaded
+     */
+    createEmptyResult() {
+        return {
+            meta: this.meta,
+            splatCount: 0,
+            totalSplats: this.meta?.totalSplats ?? 0,
+            boundingBox: this.meta?.boundingBox,
+            loadedCells: [],
+            positions: new Float32Array(0),
+            colors: new Float32Array(0),
+            opacities: new Float32Array(0),
+            scales: new Float32Array(0),
+            rotations: new Float32Array(0),
+            cov3Ds: new Float32Array(0),
+            sphericalHarmonics: null
         };
     }
 

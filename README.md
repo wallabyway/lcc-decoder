@@ -6,6 +6,8 @@ A reference LCC Decoder in js - minimal Three.js viewer of 3D Gaussian Splats da
 - This demo: https://wallabyway.github.io/lcc-decoder/
 - XGRIDS web viewer [demo](https://lcc-viewer.xgrids.com/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showroom+level+2/showroom2.lcc)
 
+- Spatial Streaming demo (see branch `spatial-streaming`): https://wallabyway.github.io/lcc-decoder/index-spatial.html
+
 https://github.com/user-attachments/assets/24949ce9-44cf-4daf-bfe1-ef657e382c07
 
 ![Image](https://github.com/user-attachments/assets/e272e4e5-f11e-4f72-a904-2e2d6e08889f)

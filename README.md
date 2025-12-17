@@ -27,6 +27,18 @@ https://github.com/user-attachments/assets/24949ce9-44cf-4daf-bfe1-ef657e382c07
 -  **Three.js Integration** - Custom 3DGS Frag/Vert shader with material for gaussian splat rendering, using `DepthFirstSort`.
 -  **Depth Sorting** - simple depth sorting via CPU Web Worker for proper transparency - hence the 'popping'
 
+### Spatial Streaming Demo
+- A "Mini map" UI of the entire scene appears at the bottom-left corner. Each square represents the x,y grid layout of tiles.
+- This mini map info, comes from the `index.bin` file
+- Each tile is loaded into the scene, based on where the camera is looking
+- First, a low-res tile (LOD 6) of 3DGS's is loaded
+- when you double click, the higher-res tile (LOD 1) is loaded, replacing all the low-res tiles
+- A Higher-res LOD tile is loaded when the user stops moving and double clicks
+- This demostrates, for large scale scenes, that the entire scene doesn't need to be loaded into memory.
+   
+Video:
+https://github.com/user-attachments/assets/4c8119bf-55e5-43cb-9825-fd325c681f5b
+
 
 ## File Structure
 

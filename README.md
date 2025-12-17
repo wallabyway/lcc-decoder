@@ -75,7 +75,7 @@ http://localhost:8000/?data=https://da9i2vj1xvtoc.cloudfront.net/lcc-model/showr
 
 ## LCC Data Format
 
-- See the spec/lcc-spec.pdf file for complete details
+- See the spec/lcc-spec.pdf file for complete details, or here: https://github.com/xgrids/LCCWhitepaper
 
 - The viewer expects LCC data in the following structure:
 
@@ -152,6 +152,7 @@ LCC format uses **Z-up coordinates** while Three.js uses **Y-up coordinates**. T
 
 ### Sharing LCC with SuperSplat
 - Supersplat announce support for LCC: https://www.reddit.com/r/PlayCanvas/comments/1obkf4x/supersplat_2120_xgrids_lcc_support_flood_fill/
+- Supersplat/Playcanvas have a LCC reader in typscript here: https://github.com/playcanvas/splat-transform/blob/main/src/readers/read-lcc.ts
 - Editing LCC inside SuperSplat editor: https://superspl.at/editor?load=https://raw.githubusercontent.com/willeastcott/assets/main/lcc/bigmirror/meta.lcc&focal=-2,1,1.75&distance=0.8&camera.overlay=false
 - Autodesk ACC with LCC - DevCon2024 Presentation  - https://aps.autodesk.com/blog/devcon-amsterdam-ssa-workshops-x-grids-gaussian-splats-meetup
 
